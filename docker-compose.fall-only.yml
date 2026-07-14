@@ -1,0 +1,17 @@
+# Fall-only scenario override.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.fall-only.yml up --build
+#
+# Patient-2 stays vitals-stable the whole run (SCENARIO: stable), so its
+# risk score never crosses RISK_THRESHOLD on its own. The only thing that
+# happens is a single scripted fall at FALL_AT_SEC. This isolates fall
+# detection latency cleanly, with nothing else able to trigger an alert.
+
+services:
+  patient-2:
+    environment:
+      PATIENT_ID: patient-2
+      MQTT_HOST: mosquitto
+      SCENARIO: stable
+      FALL_AT_SEC: "20"

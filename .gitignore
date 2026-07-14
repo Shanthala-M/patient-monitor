@@ -1,0 +1,5 @@
+certs/*
+!certs/.gitkeep
+shared-data/*.log
+__pycache__/
+*.pyc

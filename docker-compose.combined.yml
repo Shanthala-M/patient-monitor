@@ -1,0 +1,19 @@
+# Combined scenario override — deterioration AND a fall in the same run.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.combined.yml up --build
+#
+# Useful for a demo (shows both alert types in one run) but NOT for the
+# days 6-7 latency measurement — the fall alert resets the cooldown timer,
+# which can delay/mask the risk-score alert. Use the base file or
+# fall-only override for clean individual measurements instead.
+
+services:
+  patient-2:
+    environment:
+      PATIENT_ID: patient-2
+      MQTT_HOST: mosquitto
+      SCENARIO: deteriorating
+      SCENARIO_START_SEC: "30"
+      DETERIORATION_DURATION_SEC: "60"
+      FALL_AT_SEC: "45"

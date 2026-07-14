@@ -1,0 +1,94 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -i healthcheck || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # The fog node: subscribes to every patient's raw vitals, computes a
+  # composite early-warning score per patient, and decides locally whether
+  # to send a periodic summary or an immediate alert. This is the actual
+  # "fog computing" piece of the project — see fog-node/fog_node.py.
+  fog-node:
+    build: ./fog-node
+    container_name: fog-node
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      MQTT_HOST: mosquitto
+      RISK_THRESHOLD: "5"        # sensitivity knob — vary this for the days 6-7 experiment
+      SUMMARY_INTERVAL_SEC: "15"
+      ALERT_COOLDOWN_SEC: "20"
+      # AWS IoT Core — leave AWS_IOT_ENDPOINT blank to run local-only (no
+      # cloud publish, no error). Fill in once you've created the IoT
+      # thing in the console (see README's AWS setup section).
+      AWS_IOT_ENDPOINT: ""       # e.g. "a1b2c3d4e5-ats.iot.eu-west-1.amazonaws.com"
+      AWS_IOT_PORT: "8883"
+    volumes:
+      - ./shared-data:/data
+      - ./certs:/certs:ro
+
+  # Patient 1: stays stable the whole run — acts as the "control" patient.
+  patient-1:
+    build: ./sensors
+    container_name: patient-1
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      PATIENT_ID: patient-1
+      MQTT_HOST: mosquitto
+      SCENARIO: stable
+    volumes:
+      - ./shared-data:/data
+
+  # Patient 2: scripted deterioration scenario — this is the ground-truth
+  # run used for the fog-vs-cloud-only latency experiment (days 6-7).
+  # Deterioration begins 30s after startup and drifts to critical over 60s.
+  # This base file is the CLEAN deterioration-only scenario (no fall) so
+  # the risk-score alert latency can be measured without interference.
+  # For a fall-only or combined run, see the docker-compose.*.yml overrides
+  # described in README.md.
+  patient-2:
+    build: ./sensors
+    container_name: patient-2
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      PATIENT_ID: patient-2
+      MQTT_HOST: mosquitto
+      SCENARIO: deteriorating
+      SCENARIO_START_SEC: "30"
+      DETERIORATION_DURATION_SEC: "60"
+    volumes:
+      - ./shared-data:/data
+
+  # Patient 3: second stable patient — handy once the fog node/dashboard
+  # exist, and needed later for the optional "multiple patients
+  # deteriorating at once" stretch goal (just flip SCENARIO to
+  # deteriorating and/or duplicate this block as patient-4, patient-5...).
+  patient-3:
+    build: ./sensors
+    container_name: patient-3
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      PATIENT_ID: patient-3
+      MQTT_HOST: mosquitto
+      SCENARIO: stable
+    volumes:
+      - ./shared-data:/data
+
+# shared-data (bind-mounted from ./shared-data) holds ground_truth.log,
+# the timestamped record of when each scripted deterioration/fall event
+# actually happened — used to score fog-node and cloud-only alert latency.
