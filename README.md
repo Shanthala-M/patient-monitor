@@ -1,24 +1,23 @@
-# Smart Patient Health Alert System — Sensor Simulator Layer (Day 1)
+# Smart Patient Health Alert System — Sensor Simulator Layer
 
 Simulates 5 vital-sign sensors per patient (heart rate, SpO2, respiration
 rate, body temperature, motion/fall) as required by the H9FECC brief. No
 physical hardware — everything is generated in software and published over
-MQTT, which stands in locally for AWS IoT Core until the backend (days 3-4)
+MQTT, which stands in locally for AWS IoT Core until the backend 
 is wired up.
 
 ## Layout
 
-```
 patient-monitor/
-├── docker-compose.yml       # mosquitto broker + 3 patient simulators
-├── mosquitto/config/        # local MQTT broker config (anonymous, dev-only)
-├── sensors/
-│   ├── simulator.py         # one process = one patient, 1 thread per vital
-│   ├── vitals.py            # value generation + deterioration drift model
-│   ├── requirements.txt
-│   └── Dockerfile
-└── shared-data/             # ground_truth.log gets written here (bind mount)
-```
+    docker-compose.yml       # mosquitto broker + 3 patient simulators
+    mosquitto/config/        # local MQTT broker config (anonymous, dev-only)
+    sensors/
+       simulator.py         # one process = one patient, 1 thread per vital
+       vitals.py            # value generation + deterioration drift model
+       requirements.txt
+       Dockerfile
+    shared-data/             # ground_truth.log gets written here (bind mount)
+
 
 ## Run it
 
