@@ -30,7 +30,7 @@ services:
       # AWS IoT Core — leave AWS_IOT_ENDPOINT blank to run local-only (no
       # cloud publish, no error). Fill in once you've created the IoT
       # thing in the console (see README's AWS setup section).
-      AWS_IOT_ENDPOINT: ""       # e.g. "a1b2c3d4e5-ats.iot.eu-west-1.amazonaws.com"
+      AWS_IOT_ENDPOINT: "akxja9vd630af-ats.iot.us-east-1.amazonaws.com"  
       AWS_IOT_PORT: "8883"
     volumes:
       - ./shared-data:/data
