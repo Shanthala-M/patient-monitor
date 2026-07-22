@@ -3,3 +3,4 @@ certs/*
 shared-data/*.log
 __pycache__/
 *.pyc
+.env

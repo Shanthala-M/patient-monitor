@@ -24,17 +24,40 @@ services:
         condition: service_healthy
     environment:
       MQTT_HOST: mosquitto
-      RISK_THRESHOLD: "5"        # sensitivity knob — vary this for the days 6-7 experiment
-      SUMMARY_INTERVAL_SEC: "15"
-      ALERT_COOLDOWN_SEC: "20"
+      RISK_THRESHOLD: "3"        # lowered from 5 for faster, more demo-friendly alerts (also tested at threshold 5 for the report's sensitivity comparison)
+      SUMMARY_INTERVAL_SEC: "5"  # lowered from 15 so the dashboard (which polls every 5s) always has a fresh snapshot, not a stale one
+      ALERT_COOLDOWN_SEC: "8"    # lowered from 20 so alert-state readings visibly update during patient-4's 20s alert window instead of showing one frozen snapshot
       # AWS IoT Core — leave AWS_IOT_ENDPOINT blank to run local-only (no
       # cloud publish, no error). Fill in once you've created the IoT
       # thing in the console (see README's AWS setup section).
-      AWS_IOT_ENDPOINT: "akxja9vd630af-ats.iot.us-east-1.amazonaws.com"  
+      AWS_IOT_ENDPOINT: "akxja9vd630af-ats.iot.us-east-1.amazonaws.com"
       AWS_IOT_PORT: "8883"
     volumes:
       - ./shared-data:/data
       - ./certs:/certs:ro
+
+  # Patient 4: DEMO ONLY — auto-cycles stable/alert forever, no manual
+  # trigger needed. Guarantees an alert appears within CYCLE_STABLE_SEC
+  # of starting, and again every ~40s after that. Use this one for your
+  # live presentation instead of patient-2, so there's no dependency on
+  # running trigger_demo.py at the right moment. Not used for the days
+  # 6-7 latency experiments (those need one clean deterioration event,
+  # not a repeating loop) — patient-2 / fall-only / combined remain the
+  # scenarios for that.
+  patient-4:
+    build: ./sensors
+    container_name: patient-4
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      PATIENT_ID: patient-4
+      MQTT_HOST: mosquitto
+      SCENARIO: cycling
+      CYCLE_STABLE_SEC: "20"    # stable for 20s
+      CYCLE_ALERT_SEC: "20"     # then alert for 20s, then repeats
+    volumes:
+      - ./shared-data:/data
 
   # Patient 1: stays stable the whole run — acts as the "control" patient.
   patient-1:

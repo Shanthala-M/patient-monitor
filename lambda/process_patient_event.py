@@ -26,6 +26,7 @@ Python runtime).
 
 import json
 import os
+import time
 import boto3
 from decimal import Decimal
 
@@ -62,6 +63,16 @@ def lambda_handler(event, context):
                 print(f"WARNING: skipping malformed event, missing keys: {body}")
                 failed += 1
                 continue
+
+            # The event's own "timestamp" is when fog-node made its
+            # alert/summary decision (set by fog_node.py). This second
+            # field records when the event actually finished its trip
+            # through IoT Core -> Rule -> SQS -> Lambda and is about to
+            # land in DynamoDB — the gap between the two is the pure
+            # cloud-hop overhead, on top of the fog node's own decision
+            # latency. Needed for the days 6-7 cloud-inclusive latency
+            # experiment.
+            item["dynamo_received_at"] = Decimal(str(time.time()))
 
             table.put_item(Item=item)
             processed += 1

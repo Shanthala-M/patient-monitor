@@ -25,6 +25,18 @@ Configuration is via environment variables (see docker-compose.yml):
 Ground truth logging: the exact wall-clock moment deterioration begins is
 appended to /data/ground_truth.log (a shared volume). This is what the
 fog-vs-cloud-only latency experiment (days 6-7) measures alert time against.
+
+MANUAL TRIGGER (for live demos): regardless of the SCENARIO/timer config
+above, this patient also listens on:
+
+    patients/{patient_id}/control/trigger
+
+Publish any message to that topic (payload is ignored) and deterioration
+starts IMMEDIATELY, live — no waiting on a timer. This is exactly what
+you want for a presentation: run the trigger command at the exact moment
+you're ready to show the class, rather than hoping a 30-second timer
+lines up with your talking. See trigger_demo.py in the project root, or
+publish manually with mosquitto_pub — both documented in README.md.
 """
 
 import json
@@ -52,6 +64,13 @@ GROUND_TRUTH_LOG = os.environ.get("GROUND_TRUTH_LOG", "/data/ground_truth.log")
 # at exactly this time — independent of SCENARIO. Leave unset for no fall.
 FALL_AT_SEC = os.environ.get("FALL_AT_SEC")
 FALL_AT_SEC = float(FALL_AT_SEC) if FALL_AT_SEC else None
+
+CONTROL_TOPIC = f"patients/{PATIENT_ID}/control/trigger"
+
+# DEMO MODE: if SCENARIO=cycling, ignores SCENARIO_START_SEC entirely and
+# instead repeats stable -> alert -> stable -> alert forever, hands-free.
+CYCLE_STABLE_SEC = float(os.environ.get("CYCLE_STABLE_SEC", "20"))
+CYCLE_ALERT_SEC = float(os.environ.get("CYCLE_ALERT_SEC", "20"))
 
 FREQ_OVERRIDES = {
     "heart_rate": float(os.environ.get("HR_FREQ_SEC", VITAL_CONFIG["heart_rate"]["default_freq_sec"])),
@@ -91,6 +110,54 @@ def next_seq(vital_type: str) -> int:
     with _seq_lock:
         _seq_counters[vital_type] += 1
         return _seq_counters[vital_type]
+
+
+def trigger_deterioration_now(reason: str = "manual_trigger"):
+    """Immediately start deterioration, bypassing the timer. Safe to call
+    even if already deteriorating (no-op in that case)."""
+    global _deterioration_start_time
+    if _deterioration_triggered.is_set():
+        print(f"[{PATIENT_ID}] Manual trigger ignored — already deteriorating.")
+        return
+    _deterioration_start_time = time.time()
+    _deterioration_triggered.set()
+    log_ground_truth(f"deterioration_started_{reason}")
+
+
+def recover_now(reason: str = "cycle_recovery"):
+    """Clear deterioration so vitals return to normal ranges immediately.
+    Recovery is instant (not a gradual drift back down) — good enough for
+    demo purposes, and the brief doesn't require modelling recovery."""
+    _deterioration_triggered.clear()
+    log_ground_truth(f"recovered_{reason}")
+
+
+def on_control_message(client, userdata, msg):
+    """Fires when anything is published to this patient's control/trigger
+    topic — used for live demo control, independent of the timer."""
+    print(f"[{PATIENT_ID}] Manual trigger received on {msg.topic}")
+    trigger_deterioration_now(reason="manual_trigger")
+    _fall_pending.set()
+    log_ground_truth("fall_triggered_manual")
+
+
+def cycling_watcher():
+    """DEMO MODE: if SCENARIO=cycling, this patient repeatedly alternates
+    stable -> alert -> stable -> alert forever, with no manual trigger or
+    timer coordination needed. Guarantees an alert appears within
+    CYCLE_STABLE_SEC of starting, then again every
+    (CYCLE_STABLE_SEC + CYCLE_ALERT_SEC) seconds after that — ideal for
+    a live presentation where you can't predict the exact demo moment."""
+    while not _shutdown.is_set():
+        _shutdown.wait(CYCLE_STABLE_SEC)
+        if _shutdown.is_set():
+            return
+        trigger_deterioration_now(reason="cycle")
+
+        _shutdown.wait(CYCLE_ALERT_SEC)
+        if _shutdown.is_set():
+            return
+        recover_now()
 
 
 def scenario_clock_watcher():
@@ -173,13 +240,20 @@ def main():
     signal.signal(signal.SIGINT, handle_shutdown)
 
     client = mqtt.Client(client_id=f"sim-{PATIENT_ID}", protocol=mqtt.MQTTv311)
+    client.on_message = on_control_message
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+    client.subscribe(CONTROL_TOPIC, qos=1)
     client.loop_start()
 
     print(f"[{PATIENT_ID}] Connected to MQTT {MQTT_HOST}:{MQTT_PORT}, "
-          f"scenario={SCENARIO}, start_delay={SCENARIO_START_SEC}s")
+          f"scenario={SCENARIO}, start_delay={SCENARIO_START_SEC}s, "
+          f"listening for manual trigger on {CONTROL_TOPIC}")
 
     threads = [threading.Thread(target=scenario_clock_watcher, daemon=True)]
+    if SCENARIO == "cycling":
+        threads.append(threading.Thread(target=cycling_watcher, daemon=True))
+        print(f"[{PATIENT_ID}] DEMO CYCLING MODE: alert every "
+              f"{CYCLE_STABLE_SEC}s, held for {CYCLE_ALERT_SEC}s, repeating.")
     for vital_type in VITAL_CONFIG:
         threads.append(threading.Thread(target=sensor_loop, args=(client, vital_type), daemon=True))
 

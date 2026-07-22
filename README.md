@@ -1,23 +1,24 @@
-# Smart Patient Health Alert System — Sensor Simulator Layer
+# Smart Patient Health Alert System — Sensor Simulator Layer (Day 1)
 
 Simulates 5 vital-sign sensors per patient (heart rate, SpO2, respiration
 rate, body temperature, motion/fall) as required by the H9FECC brief. No
 physical hardware — everything is generated in software and published over
-MQTT, which stands in locally for AWS IoT Core until the backend 
+MQTT, which stands in locally for AWS IoT Core until the backend (days 3-4)
 is wired up.
 
 ## Layout
 
+```
 patient-monitor/
-    docker-compose.yml       # mosquitto broker + 3 patient simulators
-    mosquitto/config/        # local MQTT broker config (anonymous, dev-only)
-    sensors/
-       simulator.py         # one process = one patient, 1 thread per vital
-       vitals.py            # value generation + deterioration drift model
-       requirements.txt
-       Dockerfile
-    shared-data/             # ground_truth.log gets written here (bind mount)
-
+├── docker-compose.yml       # mosquitto broker + 3 patient simulators
+├── mosquitto/config/        # local MQTT broker config (anonymous, dev-only)
+├── sensors/
+│   ├── simulator.py         # one process = one patient, 1 thread per vital
+│   ├── vitals.py            # value generation + deterioration drift model
+│   ├── requirements.txt
+│   └── Dockerfile
+└── shared-data/             # ground_truth.log gets written here (bind mount)
+```
 
 ## Run it
 
@@ -154,6 +155,8 @@ node deliberately keeps re-alerting every `ALERT_COOLDOWN_SEC` while risk
 stays high (sensible for a real system, but only the first one is your
 detection-latency data point).
 
+
+
 ## Days 3-4: AWS backend chain setup (AWS Console, step by step)
 
 Goal: `fog-node` publishes alerts/summaries to AWS IoT Core → an IoT Rule
@@ -262,8 +265,122 @@ Message routing → Rules → click the rule → Monitor tab) for delivery
 failures to SQS, (d) Lambda → Monitor tab → CloudWatch Logs for errors in
 `processPatientEvent`.
 
+## Day 5: Flask dashboard
+
+`dashboard/` is a small Flask app that reads directly from your
+`PatientEvents` DynamoDB table and shows live per-patient status: a card
+per patient, green "Stable" or red "Alert" badge, current vitals, and
+risk score. The page polls `/api/patients` every 5 seconds via
+JavaScript for a live feel, without a full page reload.
+
+**Deliberately NOT run inside Docker** — it's just a client reading from
+DynamoDB, same as any dashboard consuming a cloud API, and this avoids
+having to pass AWS Learner Lab's temporary session credentials into a
+container.
+
+### Setup
+
+1. Get your Learner Lab AWS credentials: in the Learner Lab start page,
+   click **AWS Details** → **Show** next to "AWS CLI" — copy the 3 lines
+   (`aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`)
+2. Set them as environment variables in your terminal (PowerShell):
+   ```powershell
+   $env:AWS_ACCESS_KEY_ID="paste_here"
+   $env:AWS_SECRET_ACCESS_KEY="paste_here"
+   $env:AWS_SESSION_TOKEN="paste_here"
+   $env:AWS_REGION="us-east-1"
+   ```
+   (These only last for this terminal session — you'll need to re-set
+   them if you close the terminal or your Learner Lab session refreshes,
+   which happens periodically.)
+3. Install dependencies:
+   ```powershell
+   cd dashboard
+   pip install -r requirements.txt
+   ```
+4. Run it:
+   ```powershell
+   python app.py
+   ```
+5. Open **http://localhost:5000** in your browser
+
+### What you should see
+
+A card per patient (`patient-1`, `patient-2`, `patient-3` by default —
+override with the `PATIENT_IDS` env var if needed). Run your sensor +
+fog-node pipeline (`docker compose up`) at the same time in another
+terminal, with `AWS_IOT_ENDPOINT` set, and watch the dashboard update in
+near-real-time as patient-2 deteriorates — heart rate/SpO2/etc climbing,
+badge flipping from green "Stable" to red "Alert" within a few seconds
+of the fog node's alert reaching DynamoDB.
+
+If a card shows "No data" — that patient has no items in DynamoDB yet;
+either the pipeline hasn't run since the table was created, or the
+`PATIENT_IDS` value doesn't match the actual patient IDs your sensors use.
+
+### Avoiding retyping AWS credentials every terminal session
+
+Instead of `$env:AWS_...` every time, copy `dashboard/.env.example` to
+`dashboard/.env` and fill in real values — `app.py` loads it
+automatically if present. `.env` is gitignored, so it never gets
+committed. **Never put real credentials in `.env.example`, in
+`docker-compose.yml`, or anywhere else that gets committed to git** —
+even in a private repo, this is a bad habit worth not building. You'll
+still need to update `.env` every time your Learner Lab session expires
+(every few hours), just without retyping in every new terminal window.
+
+## Demo day: two ways to show an alert live
+
+### Option A (recommended): hands-free auto-cycling patient
+
+`patient-4` is a dedicated demo patient that automatically
+alternates stable → alert → stable → alert forever, on its own — no
+command to remember, nothing that can go wrong mid-presentation. By
+default it's alert for 20 seconds out of every 40, so within any
+~40-second window of your demo, you're guaranteed to catch it either
+already in alert or about to enter one.
+
+For your dashboard, include it:
+```powershell
+$env:PATIENT_IDS="patient-1,patient-2,patient-3,patient-4"
+py -3 app.py
+```
+
+**Rehearse this at least once**: start the full pipeline
+(`docker compose up`), open the dashboard, and just watch
+`patient-4`'s card for up to 40 seconds to confirm it flips to red
+"Alert" and back on its own, hands-free.
+
+If you want more headroom during a longer demo slot, widen the alert
+window so it's more often in alert than not — e.g. in
+`docker-compose.yml`, set `CYCLE_STABLE_SEC: "10"` and
+`CYCLE_ALERT_SEC: "30"`.
+
+### Option B: manual trigger (precise timing, but requires a live command)
+
+Every patient (including the 3 experiment patients) also listens on its
+own MQTT control topic and will start deteriorating **immediately** the
+moment you publish to it, regardless of any timer:
+
+```
+patients/{patient_id}/control/trigger
+```
+
+With your pipeline running:
+```powershell
+py -3 trigger_demo.py patient-2
+```
+
+Within a couple of seconds the dashboard's patient-2 card flips to
+alert. This also fires a fall event at the same time. Use this if you
+want to demo a *specific* named patient rather than the dedicated demo
+one, or want exact control over the moment — just be aware it's one more
+thing that could go wrong live (typo, terminal focus, etc.) compared to
+Option A.
+
+Both options are safe to combine — e.g. patient-4 cycling in the
+background as a safety net, with `trigger_demo.py patient-2` as your
+planned, deliberate demo moment.
 
 
 
-Wire the AWS backend chain: swap the fog node's local MQTT alert/summary
-publish calls for AWS IoT Core, feeding into SQS -> Lambda -> DynamoDB.
