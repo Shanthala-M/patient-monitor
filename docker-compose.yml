@@ -24,7 +24,7 @@ services:
         condition: service_healthy
     environment:
       MQTT_HOST: mosquitto
-      RISK_THRESHOLD: "3"        # lowered from 5 for faster, more demo-friendly alerts (also tested at threshold 5 for the report's sensitivity comparison)
+      RISK_THRESHOLD: "3"        # sensitivity knob; higher values alert more conservatively
       SUMMARY_INTERVAL_SEC: "5"  # lowered from 15 so the dashboard (which polls every 5s) always has a fresh snapshot, not a stale one
       ALERT_COOLDOWN_SEC: "8"    # lowered from 20 so alert-state readings visibly update during patient-4's 20s alert window instead of showing one frozen snapshot
       # AWS IoT Core — leave AWS_IOT_ENDPOINT blank to run local-only (no
@@ -74,7 +74,7 @@ services:
       - ./shared-data:/data
 
   # Patient 2: scripted deterioration scenario — this is the ground-truth
-  # run used for the fog-vs-cloud-only latency experiment (days 6-7).
+  # run used for detection-latency measurement.
   # Deterioration begins 30s after startup and drifts to critical over 60s.
   # This base file is the CLEAN deterioration-only scenario (no fall) so
   # the risk-score alert latency can be measured without interference.
@@ -97,7 +97,7 @@ services:
 
   # Patient 3: second stable patient — handy once the fog node/dashboard
   # exist, and needed later for the optional "multiple patients
-  # deteriorating at once" stretch goal (just flip SCENARIO to
+  # deteriorating at once (just flip SCENARIO to
   # deteriorating and/or duplicate this block as patient-4, patient-5...).
   patient-3:
     build: ./sensors

@@ -1,9 +1,8 @@
 """
 trigger_demo.py
 
-Run this DURING YOUR LIVE DEMO to make a chosen patient start
-deteriorating immediately — no waiting on the timer. This is the tool
-that solves "I can't predict the exact moment to show the class".
+For the LIVE DEMO chosen patient start deteriorating immediately — no waiting on the timer. 
+This is the tool that solves "I can't predict the exact moment to show the class".
 
 Usage (from the project root, with your pipeline already running via
 `docker compose up`):
@@ -15,7 +14,7 @@ That's it. Within a couple of seconds you should see:
   - (if using the MQTT test client / mosquitto_sub) messages on
     fog/patient-2/alert
 
-Requires: paho-mqtt (same dependency the sensors already use).
+Requires: paho-mqtt 
 If you don't have it installed outside Docker, run:
     pip install paho-mqtt==1.6.1
 or on Windows if that's your default Python:

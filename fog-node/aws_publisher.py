@@ -1,24 +1,11 @@
-"""
-aws_publisher.py
-
-A second, independent MQTT connection used ONLY to publish alerts and
-summaries up to AWS IoT Core. The fog node's main connection (in
-fog_node.py) still talks to the local Mosquitto broker to receive raw
-sensor readings — that doesn't change. This module just adds a cloud
-publish path on top, so none of the scoring/decision logic needs to move
-or change.
-
-Enabled only if AWS_IOT_ENDPOINT is set (env var). If unset, publish()
-is a no-op — so the whole local pipeline keeps working unmodified even
-before AWS is wired up, and during local-only test runs.
-
-Requires 3 files (downloaded when you create the IoT "thing" in the AWS
-Console) mounted into the container at /certs:
-    /certs/certificate.pem.crt   (the device certificate)
-    /certs/private.pem.key       (the private key)
-    /certs/AmazonRootCA1.pem     (Amazon's root CA, download link given
-                                   in the console when creating the thing)
-"""
+# Second MQTT connection just for publishing up to AWS IoT Core. The fog
+# node's main connection to the local broker is untouched - this is
+# purely additive, and if AWS_IOT_ENDPOINT isn't set it just does
+# nothing, so the local pipeline still works fine without AWS.
+#
+# Needs 3 cert files mounted at /certs, downloaded when you create the
+# IoT thing in the console:
+#   certificate.pem.crt, private.pem.key, AmazonRootCA1.pem
 
 import os
 import ssl
@@ -26,7 +13,7 @@ import threading
 
 import paho.mqtt.client as mqtt
 
-AWS_IOT_ENDPOINT = os.environ.get("AWS_IOT_ENDPOINT", "")  # e.g. xxxx-ats.iot.eu-west-1.amazonaws.com
+AWS_IOT_ENDPOINT = os.environ.get("AWS_IOT_ENDPOINT", "")
 AWS_IOT_PORT = int(os.environ.get("AWS_IOT_PORT", "8883"))
 CERT_DIR = os.environ.get("AWS_IOT_CERT_DIR", "/certs")
 
@@ -60,9 +47,6 @@ def _build_client():
 
 
 def publish(topic: str, payload: str, qos: int = 1):
-    """Publish to AWS IoT Core. Safe no-op if AWS_IOT_ENDPOINT isn't set
-    or the connection hasn't been established yet (fails silently with a
-    logged warning — local pipeline must never be blocked by this)."""
     global _client
 
     if not _enabled:
@@ -72,7 +56,7 @@ def publish(topic: str, payload: str, qos: int = 1):
         if _client is None:
             _client = _build_client()
         if _client is None:
-            return  # cert files missing, already warned above
+            return
 
     try:
         _client.publish(topic, payload, qos=qos)

@@ -1,28 +1,9 @@
-"""
-process_patient_event.py
-
-AWS Lambda function. Trigger: SQS queue (configure this as an SQS trigger
-on the Lambda in the console — no code needed for that wiring, AWS handles
-polling the queue for you).
-
-What it does:
-  1. Each SQS message body is the JSON alert/summary published by the fog
-     node (forwarded here via an IoT Core rule -> SQS).
-  2. Writes one item per event into DynamoDB, table name from the
-     DYNAMODB_TABLE environment variable (set this in the Lambda console
-     under Configuration -> Environment variables).
-
-DynamoDB table schema expected (create this first in the console):
-    Partition key: patient_id   (String)
-    Sort key:      timestamp    (Number)
-  (This lets you query "all events for patient X, ordered by time" for
-  both the dashboard and the latency-experiment analysis later.)
-
-Deploy: paste this file's contents directly into the Lambda console's
-inline code editor (Code tab), or zip it and upload — either works, no
-external dependencies needed (boto3 is already available in the Lambda
-Python runtime).
-"""
+# Lambda function triggered by the SQS queue. Each message is an
+# alert/summary from the fog node, forwarded through IoT Core -> the IoT
+# rule -> SQS. Just writes each one to DynamoDB.
+# Table: PatientEvents, partition key patient_id (String), sort key timestamp (Number).
+# Deploy by pasting this straight into the Lambda console code editor -
+# no extra dependencies, boto3 is already in the runtime.
 
 import json
 import os
@@ -37,9 +18,7 @@ table = dynamodb.Table(TABLE_NAME)
 
 
 def _to_decimal(obj):
-    """DynamoDB's boto3 resource API doesn't accept plain Python floats —
-    it requires Decimal. This recursively converts floats in the parsed
-    JSON event to Decimal so table.put_item() doesn't raise."""
+    # boto3's DynamoDB resource wants Decimal, not float
     if isinstance(obj, float):
         return Decimal(str(obj))
     if isinstance(obj, dict):
@@ -58,20 +37,14 @@ def lambda_handler(event, context):
             body = json.loads(record["body"])
             item = _to_decimal(body)
 
-            # required keys for the table's key schema
             if "patient_id" not in item or "timestamp" not in item:
                 print(f"WARNING: skipping malformed event, missing keys: {body}")
                 failed += 1
                 continue
 
-            # The event's own "timestamp" is when fog-node made its
-            # alert/summary decision (set by fog_node.py). This second
-            # field records when the event actually finished its trip
-            # through IoT Core -> Rule -> SQS -> Lambda and is about to
-            # land in DynamoDB — the gap between the two is the pure
-            # cloud-hop overhead, on top of the fog node's own decision
-            # latency. Needed for the days 6-7 cloud-inclusive latency
-            # experiment.
+            # separate from the fog node's own "timestamp" - this one
+            # marks when it actually landed here, so we can measure the
+            # cloud-hop time on top of the fog node's decision time
             item["dynamo_received_at"] = Decimal(str(time.time()))
 
             table.put_item(Item=item)
@@ -80,10 +53,9 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"ERROR processing record: {e}")
             failed += 1
-            # Re-raising would cause SQS to retry/redeliver this message.
-            # For a class project, logging and continuing is simpler and
-            # avoids poison-pill messages blocking the queue. Mention this
-            # trade-off in your report if asked about reliability.
+            # not re-raising here - that would make SQS retry/redeliver
+            # the message, and logging + moving on is simpler than
+            # dealing with poison-pill messages blocking the queue
 
     print(f"Processed {processed} events, {failed} failed, "
           f"out of {len(event.get('Records', []))} total.")

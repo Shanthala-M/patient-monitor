@@ -4,7 +4,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.combined.yml up --build
 #
 # Useful for a demo (shows both alert types in one run) but NOT for the
-# days 6-7 latency measurement — the fall alert resets the cooldown timer,
+# latency measurement — the fall alert resets the cooldown timer,
 # which can delay/mask the risk-score alert. Use the base file or
 # fall-only override for clean individual measurements instead.
 

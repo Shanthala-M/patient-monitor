@@ -1,43 +1,19 @@
-"""
-simulator.py
-
-Simulates ALL 5 vital sensors for a single patient. One container = one
-patient. Each vital runs on its own thread with its own publish frequency
-(satisfies the brief's "configurable frequency/dispatch rate" requirement),
-and publishes JSON readings over MQTT to:
-
-    patients/{patient_id}/vitals/{vital_type}
-
-The fog node (day 2) subscribes to these topics.
-
-Configuration is via environment variables (see docker-compose.yml):
-
-    PATIENT_ID                 e.g. "patient-1"                (required)
-    MQTT_HOST                  default "mosquitto"
-    MQTT_PORT                  default 1883
-    SCENARIO                   "stable" | "deteriorating"       (default "stable")
-    SCENARIO_START_SEC         seconds after container start before
-                                deterioration begins                (default 30)
-    DETERIORATION_DURATION_SEC how long the drift to critical takes (default 60)
-    HR_FREQ_SEC / SPO2_FREQ_SEC / RESP_FREQ_SEC / TEMP_FREQ_SEC / MOTION_FREQ_SEC
-                                per-sensor publish frequency overrides
-
-Ground truth logging: the exact wall-clock moment deterioration begins is
-appended to /data/ground_truth.log (a shared volume). This is what the
-fog-vs-cloud-only latency experiment (days 6-7) measures alert time against.
-
-MANUAL TRIGGER (for live demos): regardless of the SCENARIO/timer config
-above, this patient also listens on:
-
-    patients/{patient_id}/control/trigger
-
-Publish any message to that topic (payload is ignored) and deterioration
-starts IMMEDIATELY, live — no waiting on a timer. This is exactly what
-you want for a presentation: run the trigger command at the exact moment
-you're ready to show the class, rather than hoping a 30-second timer
-lines up with your talking. See trigger_demo.py in the project root, or
-publish manually with mosquitto_pub — both documented in README.md.
-"""
+# Runs all 5 vital sensors for one patient. One container = one patient,
+# each vital gets its own thread so they can publish at different rates.
+# Publishes to patients/{id}/vitals/{type} over MQTT, the fog node picks
+# these up.
+#
+# Env vars (set in docker-compose.yml):
+#   PATIENT_ID, MQTT_HOST, MQTT_PORT
+#   SCENARIO - "stable", "deteriorating", or "cycling" (demo mode)
+#   SCENARIO_START_SEC, DETERIORATION_DURATION_SEC
+#   FALL_AT_SEC - if set, triggers one fall at this many seconds in
+#   HR_FREQ_SEC / SPO2_FREQ_SEC / RESP_FREQ_SEC / TEMP_FREQ_SEC / MOTION_FREQ_SEC
+#
+# Also listens on patients/{id}/control/trigger - publish anything there
+# and deterioration starts right away instead of waiting on the timer.
+# Useful for a live demo where you want to control the exact moment.
+# See trigger_demo.py.
 
 import json
 import os
@@ -54,21 +30,19 @@ PATIENT_ID = os.environ.get("PATIENT_ID", "patient-1")
 MQTT_HOST = os.environ.get("MQTT_HOST", "mosquitto")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 
-SCENARIO = os.environ.get("SCENARIO", "stable")  # "stable" or "deteriorating"
+SCENARIO = os.environ.get("SCENARIO", "stable")
 SCENARIO_START_SEC = float(os.environ.get("SCENARIO_START_SEC", "30"))
 DETERIORATION_DURATION_SEC = float(os.environ.get("DETERIORATION_DURATION_SEC", "60"))
 
 GROUND_TRUTH_LOG = os.environ.get("GROUND_TRUTH_LOG", "/data/ground_truth.log")
 
-# If set (seconds since container start), a single fall event is triggered
-# at exactly this time — independent of SCENARIO. Leave unset for no fall.
 FALL_AT_SEC = os.environ.get("FALL_AT_SEC")
 FALL_AT_SEC = float(FALL_AT_SEC) if FALL_AT_SEC else None
 
 CONTROL_TOPIC = f"patients/{PATIENT_ID}/control/trigger"
 
-# DEMO MODE: if SCENARIO=cycling, ignores SCENARIO_START_SEC entirely and
-# instead repeats stable -> alert -> stable -> alert forever, hands-free.
+# cycling mode just loops stable -> alert -> stable forever, used for the
+# demo patient so it doesn't need any manual triggering
 CYCLE_STABLE_SEC = float(os.environ.get("CYCLE_STABLE_SEC", "20"))
 CYCLE_ALERT_SEC = float(os.environ.get("CYCLE_ALERT_SEC", "20"))
 
@@ -86,12 +60,12 @@ _deterioration_triggered = threading.Event()
 _deterioration_start_time = None
 _seq_counters = {v: 0 for v in VITAL_CONFIG}
 _seq_lock = threading.Lock()
-_fall_pending = threading.Event()  # set briefly to fire exactly one fall reading
+_fall_pending = threading.Event()
 
 
 def log_ground_truth(event: str):
-    """Append a timestamped ground-truth event, used later to measure
-    detection latency of the fog node vs. a cloud-only baseline."""
+    # writes out exactly when something happened so we can compare
+    # against the fog node's alert timestamp later for latency numbers
     line = json.dumps({
         "patient_id": PATIENT_ID,
         "event": event,
@@ -113,8 +87,6 @@ def next_seq(vital_type: str) -> int:
 
 
 def trigger_deterioration_now(reason: str = "manual_trigger"):
-    """Immediately start deterioration, bypassing the timer. Safe to call
-    even if already deteriorating (no-op in that case)."""
     global _deterioration_start_time
     if _deterioration_triggered.is_set():
         print(f"[{PATIENT_ID}] Manual trigger ignored — already deteriorating.")
@@ -125,16 +97,13 @@ def trigger_deterioration_now(reason: str = "manual_trigger"):
 
 
 def recover_now(reason: str = "cycle_recovery"):
-    """Clear deterioration so vitals return to normal ranges immediately.
-    Recovery is instant (not a gradual drift back down) — good enough for
-    demo purposes, and the brief doesn't require modelling recovery."""
+    # just resets instantly, doesn't drift back down gradually - fine for
+    # demo purposes since we don't need to measure recovery
     _deterioration_triggered.clear()
     log_ground_truth(f"recovered_{reason}")
 
 
 def on_control_message(client, userdata, msg):
-    """Fires when anything is published to this patient's control/trigger
-    topic — used for live demo control, independent of the timer."""
     print(f"[{PATIENT_ID}] Manual trigger received on {msg.topic}")
     trigger_deterioration_now(reason="manual_trigger")
     _fall_pending.set()
@@ -142,12 +111,10 @@ def on_control_message(client, userdata, msg):
 
 
 def cycling_watcher():
-    """DEMO MODE: if SCENARIO=cycling, this patient repeatedly alternates
-    stable -> alert -> stable -> alert forever, with no manual trigger or
-    timer coordination needed. Guarantees an alert appears within
-    CYCLE_STABLE_SEC of starting, then again every
-    (CYCLE_STABLE_SEC + CYCLE_ALERT_SEC) seconds after that — ideal for
-    a live presentation where you can't predict the exact demo moment."""
+    # loops forever: stable for CYCLE_STABLE_SEC, then alert for
+    # CYCLE_ALERT_SEC, repeat. Used by the demo patient so there's always
+    # an alert showing up within a predictable window without anyone
+    # having to trigger it by hand
     while not _shutdown.is_set():
         _shutdown.wait(CYCLE_STABLE_SEC)
         if _shutdown.is_set():
@@ -161,10 +128,6 @@ def cycling_watcher():
 
 
 def scenario_clock_watcher():
-    """Waits until SCENARIO_START_SEC has elapsed, then flips the patient
-    into 'deteriorating' mode and logs the ground-truth event. Also fires
-    a single scheduled fall event (if FALL_AT_SEC is configured), tracked
-    separately from the deterioration scenario."""
     global _deterioration_start_time
     deterioration_done = SCENARIO != "deteriorating"
     fall_done = FALL_AT_SEC is None
@@ -198,7 +161,6 @@ def sensor_loop(client: mqtt.Client, vital_type: str):
             elapsed = time.time() - _deterioration_start_time
 
         if vital_type == "motion":
-            # consume the one-shot fall trigger, if it just fired
             force_fall = _fall_pending.is_set()
             if force_fall:
                 _fall_pending.clear()

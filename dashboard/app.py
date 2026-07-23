@@ -1,25 +1,14 @@
-"""
-app.py
-
-Flask dashboard for the Smart Patient Health Alert System.
-
-Runs as a plain local Python process (NOT inside Docker) — deliberately
-kept separate from the sensor/fog-node containers, since it just needs to
-read from DynamoDB like any other client of the cloud backend. This also
-sidesteps having to pass AWS Learner Lab's temporary session credentials
-into a container.
-
-Two routes:
-    GET /            -> renders the dashboard page (initial data)
-    GET /api/patients -> JSON: latest status for every known patient
-                          (polled by the page's own JS every few seconds
-                          for a "live" feel, no full page reload)
-
-Configuration (env vars, all optional):
-    AWS_REGION       default "us-east-1"
-    DYNAMODB_TABLE   default "PatientEvents"
-    PATIENT_IDS      comma-separated list, default "patient-1,patient-2,patient-3,patient-4"
-"""
+# Local Flask version of the dashboard, kept around for dev/testing.
+# The version that's actually deployed publicly is the Lambda one in
+# lambda-dashboard/. This one just reads from DynamoDB and renders the
+# same page - useful for iterating on the design without redeploying to
+# AWS every time.
+#
+# GET /              -> dashboard page
+# GET /api/patients  -> JSON, latest per-patient status
+# GET /api/activity  -> JSON, recent activity feed
+#
+# Env vars: AWS_REGION, DYNAMODB_TABLE, PATIENT_IDS, RISK_THRESHOLD
 
 import os
 import time
